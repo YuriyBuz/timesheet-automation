@@ -257,6 +257,24 @@ assert(getConfig().ADMIN_EMAILS_LIST.length === 1, 'пошта читаєтьс�
   global.__PROPS__ = saved;
 })();
 
+console.log('\n== Список отримувачів ==');
+assert(parseEmails_('a@x.com, b@y.com; c@z.com').length === 3, 'кома, крапка з комою, пробіл');
+assert(parseEmails_('  ').length === 0 && parseEmails_('не пошта').length === 0,
+  'сміття не потрапляє у список');
+assert(mergeEmails_(['a@x.com'], ['b@y.com']).join(',') === 'a@x.com,b@y.com',
+  'нова адреса додається до наявної');
+assert(mergeEmails_(['a@x.com'], ['A@X.com']).length === 1, 'повтор не дублюється');
+assert(mergeEmails_(['a@x.com', 'b@y.com'], []).length === 2, 'порожній ввід нічого не ламає');
+(function () {
+  // Порожній ввід має лишати список як є, а не витирати його.
+  const fakeUi = { alert: () => 'OK', Button: { CANCEL: 'CANCEL', NO: 'NO', CLOSE: 'CLOSE' },
+    ButtonSet: { OK: 'OK', YES_NO_CANCEL: 'YNC' } };
+  assert(resolveEmails_(fakeUi, ['a@x.com'], '').join(',') === 'a@x.com',
+    'ОК без вводу зберігає поточних отримувачів');
+  assert(resolveEmails_(fakeUi, ['a@x.com'], 'a@x.com, b@y.com').join(',') === 'a@x.com,b@y.com',
+    'перелік з наявною адресою зберігається без зайвих питань');
+})();
+
 console.log('\n== Розпізнавання назв аркушів ==');
 assert(JSON.stringify(parseMonthSheetName_('Вересень 2026')) === '{"year":2026,"month":9}', 'Вересень 2026');
 assert(parseMonthSheetName_('_Журнал_табелю') === null, 'службовий аркуш не є місяцем');

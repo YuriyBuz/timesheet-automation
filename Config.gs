@@ -106,10 +106,7 @@ function getConfig() {
     }
   });
 
-  cfg.ADMIN_EMAILS_LIST = String(cfg.ADMIN_EMAILS)
-    .split(/[,;\s]+/)
-    .map(function (s) { return s.trim(); })
-    .filter(function (s) { return s.indexOf('@') > 0; });
+  cfg.ADMIN_EMAILS_LIST = parseEmails_(cfg.ADMIN_EMAILS);
 
   cfg.TIMESHEET_ID = extractSpreadsheetId_(cfg.TIMESHEET_ID);
   cfg.REF_ID = extractSpreadsheetId_(cfg.REF_ID);
@@ -119,6 +116,26 @@ function getConfig() {
   cfg.EMP_ID_FROM_MONTH = m ? Number(m[2]) : 8;
 
   return cfg;
+}
+
+/** Розбирає рядок з адресами: кома, крапка з комою або пробіл. */
+function parseEmails_(text) {
+  return String(text === null || text === undefined ? '' : text)
+    .split(/[,;\s]+/)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.indexOf('@') > 0; });
+}
+
+/** Об'єднує два списки адрес без повторів (регістр не має значення). */
+function mergeEmails_(current, added) {
+  var out = [], seen = {};
+  current.concat(added).forEach(function (email) {
+    var key = email.toLowerCase();
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(email);
+  });
+  return out;
 }
 
 /** Приймає і повне посилання на таблицю, і голий ID. */

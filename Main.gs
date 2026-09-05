@@ -14,6 +14,7 @@ function onOpen() {
       .addSeparator()
       .addItem('🎛 Панель керування', 'showSidebar')
       .addItem('⚙️ Перші налаштування (довідник і пошта)', 'showSetupDialog')
+      .addItem('✉️ Кому надсилати звіти…', 'showEmailDialog')
       .addItem('⚙️ Увімкнути автостворення (кінець місяця)', 'installTriggers')
       .addItem('⛔ Вимкнути автостворення', 'removeTriggers')
       .addToUi();
@@ -32,11 +33,16 @@ function showSetupDialog() {
 
   var r1 = ui.prompt('Налаштування 1 з 2 — довідник працівників',
     'Вставте посилання на таблицю-довідник (аркуш «' + cfg.REF_EMPLOYEES_SHEET + '»)' +
-    (cfg.REF_ID ? '\n\nЗараз: ' + cfg.REF_ID : ''),
+    (cfg.REF_ID ? '\n\nЗараз: ' + cfg.REF_ID + '\nЛишити як є — просто ОК.' : ''),
     ui.ButtonSet.OK_CANCEL);
   if (r1.getSelectedButton() !== ui.Button.OK) return;
-  var refId = extractSpreadsheetId_(r1.getResponseText());
-  if (!refId) { ui.alert('Табель', 'Посилання порожнє — нічого не змінено.', ui.ButtonSet.OK); return; }
+
+  var typedRef = String(r1.getResponseText() || '').trim();
+  var refId = typedRef ? extractSpreadsheetId_(typedRef) : cfg.REF_ID;
+  if (!refId) {
+    ui.alert('Табель', 'Довідник не вказано — нічого не змінено.', ui.ButtonSet.OK);
+    return;
+  }
 
   var refName;
   try {
@@ -48,18 +54,73 @@ function showSetupDialog() {
   }
 
   var r2 = ui.prompt('Налаштування 2 з 2 — пошта',
-    'Кому надсилати звіти? Кілька адрес — через кому.' +
-    (cfg.ADMIN_EMAILS ? '\n\nЗараз: ' + cfg.ADMIN_EMAILS : ''),
+    emailPromptText_(cfg.ADMIN_EMAILS_LIST),
     ui.ButtonSet.OK_CANCEL);
   if (r2.getSelectedButton() !== ui.Button.OK) return;
 
-  saveSetup_(refId, r2.getResponseText());
-  var saved = getConfig();
+  var emails = resolveEmails_(ui, cfg.ADMIN_EMAILS_LIST, r2.getResponseText());
+  if (emails === null) return;
+
+  saveSetup_(refId, emails.join(', '));
   ui.alert('Табель',
     'Збережено.\n\nДовідник: ' + refName + '\nЗвіти: ' +
-    (saved.ADMIN_EMAILS_LIST.join(', ') || '— (жодної коректної адреси)') +
+    (emails.join(', ') || '— (жодної адреси)') +
     '\n\nДалі: ⏱ Табель → 🆔 Проставити emp_id, потім ⚙️ Увімкнути автостворення.',
     ui.ButtonSet.OK);
+}
+
+/** Окремий діалог, щоб додати або змінити отримувачів, не чіпаючи довідник. */
+function showEmailDialog() {
+  var ui = SpreadsheetApp.getUi();
+  var cfg = getConfig();
+
+  var res = ui.prompt('Кому надсилати звіти',
+    emailPromptText_(cfg.ADMIN_EMAILS_LIST), ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+
+  var emails = resolveEmails_(ui, cfg.ADMIN_EMAILS_LIST, res.getResponseText());
+  if (emails === null) return;
+
+  saveSetup_(null, emails.join(', '));
+  ui.alert('Табель', emails.length
+    ? 'Звіти надсилатимуться на:\n' + emails.join('\n')
+    : 'Список отримувачів порожній — листи не надсилатимуться.', ui.ButtonSet.OK);
+}
+
+function emailPromptText_(current) {
+  if (!current.length) return 'Введіть адресу. Кілька — через кому.';
+  return 'Зараз звіти йдуть на:\n' + current.join('\n') +
+    '\n\nВведіть адресу, яку треба додати (кілька — через кому).' +
+    '\nЛишити як є — просто ОК.';
+}
+
+/**
+ * Повертає підсумковий список адрес або null, якщо користувач передумав.
+ * Якщо введене не містить наявних адрес — питає, додати чи замінити,
+ * щоб випадково не викинути когось із розсилки.
+ */
+function resolveEmails_(ui, current, text) {
+  var typed = parseEmails_(text);
+  if (!typed.length) {
+    if (String(text || '').trim()) {
+      ui.alert('Табель', 'Жодної коректної адреси не розпізнано — список не змінено.',
+        ui.ButtonSet.OK);
+    }
+    return current;
+  }
+
+  var typedKeys = typed.map(function (e) { return e.toLowerCase(); });
+  var dropped = current.filter(function (e) { return typedKeys.indexOf(e.toLowerCase()) < 0; });
+  var merged = mergeEmails_(current, typed);
+  if (!dropped.length) return merged;
+
+  var answer = ui.alert('Табель',
+    'Додати до наявних чи замінити?\n\n' +
+    'ТАК — надсилати на: ' + merged.join(', ') + '\n' +
+    'НІ — надсилати тільки на: ' + typed.join(', '),
+    ui.ButtonSet.YES_NO_CANCEL);
+  if (answer === ui.Button.CANCEL || answer === ui.Button.CLOSE) return null;
+  return answer === ui.Button.NO ? typed : merged;
 }
 
 function showSidebar() {
