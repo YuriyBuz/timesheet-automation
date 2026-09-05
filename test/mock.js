@@ -15,8 +15,11 @@ class Range {
   setNotes(v){this._each((R,C,r,c)=>{this.sheet.notes[`${R},${C}`]=v[r][c];});return this;}
   clearNote(){this._each((R,C)=>{delete this.sheet.notes[`${R},${C}`];});return this;}
   clearContent(){this._each((R,C)=>this.sheet.set(R,C,''));return this;}
+  getBackgrounds(){const o=[];for(let r=0;r<this.nr;r++){const line=[];for(let c=0;c<this.nc;c++)line.push(this.sheet.bgs[`${this.row+r},${this.col+c}`]||'#ffffff');o.push(line);}return o;}
+  setBackgrounds(v){this._each((R,C,r,c)=>{const col=v[r][c];if(col===null||col===undefined)delete this.sheet.bgs[`${R},${C}`];else this.sheet.bgs[`${R},${C}`]=col;});return this;}
+  setBackground(col){this._each((R,C)=>{if(col===null||col===undefined)delete this.sheet.bgs[`${R},${C}`];else this.sheet.bgs[`${R},${C}`]=col;});return this;}
   setNumberFormat(f){this._each((R,C)=>{this.sheet.formats[`${R},${C}`]=f;});return this;}
-  setHorizontalAlignment(){return this;} setFontWeight(){return this;} setBackground(){return this;}
+  setHorizontalAlignment(){return this;} setFontWeight(){return this;}
   getCell(r,c){return new Range(this.sheet,this.row+r-1,this.col+c-1,1,1);}
   isPartOfMerge(){return !!this.sheet.mergeAt(this.row,this.col);}
   getMergedRanges(){const out=[];const seen=new Set();this._each((R,C)=>{const m=this.sheet.mergeAt(R,C);if(m&&!seen.has(m.key)){seen.add(m.key);out.push(new Range(this.sheet,m.row,m.col,m.nr,m.nc));}});return out;}
@@ -34,7 +37,7 @@ class Range {
 }
 
 class Sheet {
-  constructor(ss,name,grid,merges){this.ss=ss;this.name=name;this.grid=grid;this.notes={};this.formats={};
+  constructor(ss,name,grid,merges){this.ss=ss;this.name=name;this.grid=grid;this.notes={};this.formats={};this.bgs={};
     this.merges=(merges||[]).map(m=>({...m,key:`${m.row},${m.col},${m.nr},${m.nc}`}));this.hidden=false;}
   get maxRows(){return this.grid.length;} get maxCols(){return this.grid[0].length;}
   get(r,c){const row=this.grid[r-1];if(!row)return '';const v=row[c-1];return v===undefined?'':v;}
@@ -55,7 +58,7 @@ class Sheet {
   insertColumnsBefore(c,n){
     this.grid.forEach(row=>{while(row.length<this.maxCols)row.push('');row.splice(c-1,0,...new Array(n).fill(''));});
     const shift=(k)=>{const o={};Object.keys(k).forEach(key=>{const[r,cc]=key.split(',').map(Number);o[`${r},${cc>=c?cc+n:cc}`]=k[key];});return o;};
-    this.notes=shift(this.notes);this.formats=shift(this.formats);
+    this.notes=shift(this.notes);this.formats=shift(this.formats);this.bgs=shift(this.bgs);
     this.merges.forEach(m=>{if(m.col>=c)m.col+=n;else if(c>m.col&&c<m.col+m.nc)m.nc+=n;m.key=`${m.row},${m.col},${m.nr},${m.nc}`;});
     return this;}
   deleteColumns(c,n){
@@ -63,12 +66,13 @@ class Sheet {
     this.merges=this.merges.filter(m=>!(m.col>=c&&m.col+m.nc-1<c+n));
     this.merges.forEach(m=>{if(m.col>=c+n)m.col-=n;m.key=`${m.row},${m.col},${m.nr},${m.nc}`;});
     const shift=(k)=>{const o={};Object.keys(k).forEach(key=>{const[r,cc]=key.split(',').map(Number);if(cc>=c&&cc<c+n)return;o[`${r},${cc>=c+n?cc-n:cc}`]=k[key];});return o;};
-    this.notes=shift(this.notes);this.formats=shift(this.formats);
+    this.notes=shift(this.notes);this.formats=shift(this.formats);this.bgs=shift(this.bgs);
     return this;}
   insertRowAfter(r){this.grid.splice(r,0,new Array(this.maxCols).fill(''));return this;}
   copyTo(ss){const g=this.grid.map(r=>r.slice());
     const s=new Sheet(ss,'Копія '+this.name,g,this.merges.map(m=>({...m})));
     s.notes=Object.assign({},this.notes);s.formats=Object.assign({},this.formats);
+    s.bgs=Object.assign({},this.bgs);
     ss.sheets.push(s);return s;}
 }
 

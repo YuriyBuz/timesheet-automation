@@ -58,6 +58,19 @@ const posAt = (r) => String(aug.get(r, 2)).trim();
 const NAME = {};
 Object.keys(ROW).forEach(k => { NAME[k] = nameAt(ROW[k]); });
 
+// Розфарбовуємо серпень так, як у справжній таблиці: підсвітка вихідних у
+// рядку днів тижня + зелені позначки відпрацьованих днів у таблиці.
+const WEEKEND_BG = '#f6b26b', WORKDAY_BG = '#b6d7a8', WORKED_BG = '#93c47d';
+for (let d = 0; d < 31; d++) {
+  const weekend = [1, 2, 8, 9, 15, 16, 22, 23, 29, 30].includes(d + 1); // серпень 2026: сб/нд
+  const col = 3 + d * 2;
+  aug.getRange(3, col, 1, 2).setBackground(weekend ? WEEKEND_BG : WORKDAY_BG);
+  if (d < 3) {
+    for (let r = 5; r <= 6; r++) aug.getRange(r, col, 1, 2).setBackground(WORKED_BG);
+  }
+}
+aug.getRange(7, 3, 1, 62).setBackground('#cccccc'); // рядок-роздільник
+
 // У табелі людину записали скорочено — довідник має знайти її за ініціалами.
 const shortOf = (full) => {
   const p = full.split(/\s+/);
@@ -164,6 +177,20 @@ assert(kept === 46, 'усіх 46 працівників скопійовано (
 assert(ids === 44, 'emp_id проставлено всім, крім «немає в довіднику» і «неоднозначно» (' + ids + ')');
 assert(totalsLeft === 0, 'статичні підсумки очищено');
 
+console.log('\n== Кольори ==');
+const bgAt = (r, c) => sepSheetBg(r, c);
+function sepSheetBg(r, c) { return sep.getRange(r, c, 1, 1).getBackgrounds()[0][0]; }
+assert(bgAt(5, l2.firstDayCol) === '#ffffff' && bgAt(6, l2.firstDayCol + 2) === '#ffffff',
+  'зелені позначки відпрацьованих днів за серпень затерті');
+assert(bgAt(7, l2.firstDayCol) === '#cccccc', 'сірий рядок-роздільник не зачеплено');
+// 1 вересня 2026 — вівторок, отже вихідні: 5, 6, 12, 13, 19, 20, 26, 27
+const sepWeekend = (d) => bgAt(3, l2.firstDayCol + (d - 1) * 2) === WEEKEND_BG;
+assert(sepWeekend(5) && sepWeekend(6) && sepWeekend(12) && sepWeekend(13),
+  'підсвітка вихідних стоїть на суботах і неділях вересня');
+assert(!sepWeekend(1) && !sepWeekend(2) && !sepWeekend(7),
+  'будні вересня не підсвічені як вихідні');
+assert(bgAt(3, l2.firstDayCol) === WORKDAY_BG, 'будні зберегли свій колір');
+
 console.log('\n== Звірка з довідником ==');
 const i = report.issues;
 ['notFound', 'fuzzy', 'ambiguous', 'fired', 'positionMismatch', 'duplicates',
@@ -256,6 +283,37 @@ const layD = analyzeLayout_(sepD);
 assert(sepD.get(2, layD.firstDayCol) instanceof Date, 'дати лишились датами, а не стали текстом');
 assert(sepD.getRange(2, layD.firstDayCol).getDisplayValue() === '1/9', 'відображаються як 1/9');
 assert(layD.dayCount === 30, 'кількість днів теж підігнана');
+global.__ACTIVE_SS__ = tsSs;
+
+console.log('\n== Вихідні, залиті суцільною колонкою в самій таблиці ==');
+// Якщо в аркуші вихідні підсвічені не лише в шапці, а й у клітинках днів
+// згори донизу — цю підсвітку теж треба перенести, а не затерти.
+const colGrid = csv.map(r => { const c = r.slice(); while (c.length < WIDTH) c.push(''); return c.slice(0, WIDTH); });
+const ss3 = new Spreadsheet('ts-cols', 'Табель (колонки)');
+const aug3 = ss3.addSheet('Серпень 2026', colGrid, merges.map(m => ({ ...m })));
+__REGISTER_SS__(ss3);
+global.__ACTIVE_SS__ = ss3;
+for (let d = 0; d < 31; d++) {
+  const weekend = [1, 2, 8, 9, 15, 16, 22, 23, 29, 30].includes(d + 1);
+  const col = 3 + d * 2;
+  aug3.getRange(3, col, 1, 2).setBackground(weekend ? WEEKEND_BG : WORKDAY_BG);
+  for (let r = 5; r <= aug3.getLastRow(); r++) {
+    if (!String(aug3.get(r, 1)).trim()) continue;
+    aug3.getRange(r, col, 1, 2).setBackground(weekend ? WEEKEND_BG : '#ffffff');
+  }
+}
+const cfg3 = getConfig();
+cfg3.TIMESHEET_ID = 'ts-cols';
+cfg3.WRITE_LOG = false;
+buildMonthSheet_(2026, 9, 'manual', cfg3);
+const sep3 = ss3.getSheetByName('Вересень 2026');
+const lay3 = analyzeLayout_(sep3);
+const bg3 = (r, d) => sep3.getRange(r, lay3.firstDayCol + (d - 1) * 2, 1, 1).getBackgrounds()[0][0];
+assert(bg3(5, 5) === WEEKEND_BG && bg3(5, 6) === WEEKEND_BG,
+  'колонки 5 і 6 вересня (сб, нд) залиті у таблиці');
+assert(bg3(5, 1) === '#ffffff' && bg3(5, 7) === '#ffffff',
+  'будні вересня в таблиці чисті');
+assert(bg3(3, 12) === WEEKEND_BG, 'шапка теж перенесена');
 global.__ACTIVE_SS__ = tsSs;
 
 console.log(failed ? '\n✗ ПОМИЛОК: ' + failed : '\n✓ УСІ ПЕРЕВІРКИ ПРОЙДЕНО');

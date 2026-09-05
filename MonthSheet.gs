@@ -299,6 +299,22 @@ function clearMonthData_(sheet, layout, cfg, report) {
   body.clearContent();
   body.clearNote();
 
+  // Заливка відпрацьованих днів минулого місяця приїжджає разом з копією —
+  // прибираємо її. Рядки-роздільники між групами не чіпаємо: їхній сірий фон
+  // тягнеться через увесь аркуш і має лишитись.
+  if (cfg.CLEAR_DAY_COLORS) {
+    var names = sheet.getRange(layout.firstDataRow, NAME_COL, rows, 1).getDisplayValues();
+    var backgrounds = body.getBackgrounds();
+    var painted = 0;
+    for (var br = 0; br < rows; br++) {
+      if (!String(names[br][0]).trim()) continue;
+      painted++;
+      for (var bc = 0; bc < backgrounds[br].length; bc++) backgrounds[br][bc] = null;
+    }
+    body.setBackgrounds(backgrounds);
+    if (painted) report.structure.push('Очищено заливку днів у ' + painted + ' рядках.');
+  }
+
   if (cfg.CLEAR_NAME_NOTES) {
     sheet.getRange(layout.firstDataRow, NAME_COL, rows, 1).clearNote();
   }
@@ -319,6 +335,124 @@ function clearMonthData_(sheet, layout, cfg, report) {
   if (stale) {
     report.structure.push('Очищено ' + stale +
       ' підсумкових комірок, у яких були числа замість формул.');
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Підсвітка вихідних
+//
+// Копія приносить кольори там, де вихідні були в МИНУЛОМУ місяці. Тому перед
+// перебудовою знімаємо «палітру» (який колір у буднів, який у субот/неділь),
+// а після — накладаємо її на правильні колонки нового місяця.
+// ---------------------------------------------------------------------------
+
+function isWeekendName_(text) {
+  var t = normHeader_(text);
+  return t === 'субота' || t === 'неділя';
+}
+
+/** Найчастіший колір у списку; '' якщо список порожній. */
+function modalColor_(colors) {
+  var count = {}, best = '', bestN = 0;
+  for (var i = 0; i < colors.length; i++) {
+    var c = colors[i];
+    if (!c) continue;
+    count[c] = (count[c] || 0) + 1;
+    if (count[c] > bestN) { bestN = count[c]; best = c; }
+  }
+  return best;
+}
+
+/** Повертає {weekend, workday}, лише якщо кольори справді різні. */
+function splitWeekendColors_(colors, weekendFlags) {
+  var weekend = [], workday = [];
+  for (var i = 0; i < colors.length; i++) {
+    (weekendFlags[Math.floor(i / 2)] ? weekend : workday).push(colors[i]);
+  }
+  var w = modalColor_(weekend);
+  var d = modalColor_(workday);
+  if (!w || !d || w === d) return null;
+  return { weekend: w, workday: d };
+}
+
+function sampleWeekendPalette_(sheet, layout) {
+  var width = layout.lastDayCol - layout.firstDayCol + 1;
+  var weekdayText = sheet.getRange(layout.weekdayRow, layout.firstDayCol, 1, width)
+    .getDisplayValues()[0];
+  var flags = [];
+  for (var i = 0; i < layout.dayCount; i++) flags.push(isWeekendName_(weekdayText[i * 2]));
+
+  var palette = { rows: [], data: null };
+  for (var r = layout.dateRow; r <= layout.headerRow; r++) {
+    var pick = splitWeekendColors_(
+      sheet.getRange(r, layout.firstDayCol, 1, width).getBackgrounds()[0], flags);
+    if (pick) palette.rows.push({ offset: r - layout.dateRow, weekend: pick.weekend, workday: pick.workday });
+  }
+
+  // У таблиці днів заливка вихідних — це колонка, залита рівномірно згори
+  // донизу. Різнобій (позначки відпрацьованих днів) не є підсвіткою вихідних.
+  var rows = layout.lastDataRow - layout.firstDataRow + 1;
+  if (rows > 0) {
+    var names = sheet.getRange(layout.firstDataRow, NAME_COL, rows, 1).getDisplayValues();
+    var body = sheet.getRange(layout.firstDataRow, layout.firstDayCol, rows, width).getBackgrounds();
+    var uniform = [];
+    for (var c = 0; c < width; c++) {
+      var color = null, ok = true, seen = false;
+      for (var rr = 0; rr < rows; rr++) {
+        if (!String(names[rr][0]).trim()) continue;
+        seen = true;
+        if (color === null) color = body[rr][c];
+        else if (body[rr][c] !== color) { ok = false; break; }
+      }
+      uniform.push(ok && seen ? color : '');
+    }
+    palette.data = splitWeekendColors_(uniform, flags);
+  }
+  return palette;
+}
+
+function applyWeekendPalette_(sheet, layout, year, month, palette, report) {
+  if (!palette || (!palette.rows.length && !palette.data)) return;
+  var width = layout.dayCount * 2;
+  var flags = [];
+  for (var d = 1; d <= layout.dayCount; d++) {
+    var day = new Date(year, month - 1, d).getDay();
+    flags.push(day === 0 || day === 6);
+  }
+
+  function paint(pick) {
+    var line = [];
+    for (var i = 0; i < layout.dayCount; i++) {
+      var color = flags[i] ? pick.weekend : pick.workday;
+      line.push(color, color);
+    }
+    return line;
+  }
+
+  palette.rows.forEach(function (p) {
+    sheet.getRange(layout.dateRow + p.offset, layout.firstDayCol, 1, width)
+      .setBackgrounds([paint(p)]);
+  });
+
+  if (palette.data) {
+    var rows = layout.lastDataRow - layout.firstDataRow + 1;
+    if (rows > 0) {
+      var names = sheet.getRange(layout.firstDataRow, NAME_COL, rows, 1).getDisplayValues();
+      var body = sheet.getRange(layout.firstDataRow, layout.firstDayCol, rows, width);
+      var current = body.getBackgrounds();
+      var line = paint(palette.data);
+      for (var r = 0; r < rows; r++) {
+        if (!String(names[r][0]).trim()) continue;
+        current[r] = line.slice();
+      }
+      body.setBackgrounds(current);
+    }
+  }
+
+  if (report) {
+    report.structure.push('Підсвітку вихідних перенесено на суботи й неділі ' +
+      UA_MONTHS[month - 1].toLowerCase() + '.');
   }
 }
 
@@ -354,11 +488,16 @@ function buildMonthSheet_(year, month, mode, cfg) {
   ss.setActiveSheet(copy);
   ss.moveActiveSheet(src.sheet.getIndex() + 1);
 
+  // Знімаємо палітру вихідних до будь-яких правок — поки в шапці ще стоять
+  // дні тижня минулого місяця.
+  var palette = sampleWeekendPalette_(copy, analyzeLayout_(copy));
+
   var lay = ensureEmpIdColumn_(copy, report);
   lay = adjustDayColumns_(copy, year, month, report);
   rebuildHeaders_(copy, lay, year, month);
   lay = analyzeLayout_(copy);
   clearMonthData_(copy, lay, cfg, report);
+  applyWeekendPalette_(copy, lay, year, month, palette, report);
 
   report.created = true;
   report.daysInMonth = lay.dayCount;
